@@ -1,37 +1,36 @@
 /***************************************************
-  This is an example for our Adafruit FONA Cellular Module
+  This is an example for our Hackabels GSM Hack Module
 
   Designed specifically to work with the Adafruit FONA
-  ----> http://www.adafruit.com/products/1946
-  ----> http://www.adafruit.com/products/1963
-  ----> http://www.adafruit.com/products/2468
-  ----> http://www.adafruit.com/products/2542
+  ----> https://www.hackables.cc/gsm/12-gsm-hack.html
 
   These cellular modules use TTL Serial to communicate, 2 pins are
-  required to interface
-  Adafruit invests time and resources providing this open source code,
-  please support Adafruit and open-source hardware by purchasing
-  products from Adafruit!
+  required to interface.
 
-  Written by Limor Fried/Ladyada for Adafruit Industries.
+  Written by Limor Fried/Ladyada maintained by Luis Gonçalves for GSM Hack.
   BSD license, all text above must be included in any redistribution
  ****************************************************/
 
 /*
 THIS CODE IS STILL IN PROGRESS!
 
-Open up the serial console on the Arduino at 115200 baud to interact with FONA
+Open up the serial console on the Arduino at 38400 baud to interact with FONA
 
 
-This code will receive an SMS, identify the sender's phone number, and automatically send a response
+This code will receive an SMS, identify the sender's phone number, and will change the relay state
+then it will send and SMS back with the state of the relay.
 
 */
 
 #include "Adafruit_FONA.h"
 
-#define FONA_RX 2
+#define FONA_RX 4
 #define FONA_TX 3
-#define FONA_RST 4
+#define FONA_RST 7
+#define FONA_POWER 5
+#define RELAY 8
+
+char relay_state;
 
 // this is a large buffer for replies
 char replybuffer[255];
@@ -46,23 +45,33 @@ SoftwareSerial *fonaSerial = &fonaSS;
 // Hardware serial is also possible!
 //  HardwareSerial *fonaSerial = &Serial1;
 
-// Use this for FONA 800 and 808s
 Adafruit_FONA fona = Adafruit_FONA(FONA_RST);
-// Use this one for FONA 3G
-//Adafruit_FONA_3G fona = Adafruit_FONA_3G(FONA_RST);
 
 uint8_t readline(char *buff, uint8_t maxbuff, uint16_t timeout = 0);
 
-void setup() {
+void setup() 
+{
   while (!Serial);
 
-  Serial.begin(115200);
+  pinMode(RELAY, OUTPUT);
+  digitalWrite(RELAY, LOW);
+  relay_state = 0;
+
+  pinMode(FONA_POWER, OUTPUT);
+  digitalWrite(FONA_POWER, LOW);
+  delay(100);
+  digitalWrite(FONA_POWER, HIGH);
+  delay(1500);
+  digitalWrite(FONA_POWER, LOW);
+
+  Serial.begin(38400);
   Serial.println(F("FONA SMS caller ID test"));
   Serial.println(F("Initializing....(May take 3 seconds)"));
 
   // make it slow so its easy to read!
-  fonaSerial->begin(4800);
-  if (! fona.begin(*fonaSerial)) {
+  fonaSerial->begin(9600);
+  if (! fona.begin(*fonaSerial)) 
+  {
     Serial.println(F("Couldn't find FONA"));
     while(1);
   }
@@ -71,7 +80,8 @@ void setup() {
   // Print SIM card IMEI number.
   char imei[16] = {0}; // MUST use a 16 character buffer for IMEI!
   uint8_t imeiLen = fona.getIMEI(imei);
-  if (imeiLen > 0) {
+  if (imeiLen > 0) 
+  {
     Serial.print("SIM card IMEI: "); Serial.println(imei);
   }
 
@@ -81,60 +91,74 @@ void setup() {
 }
 
   
-char fonaNotificationBuffer[64];          //for notifications from the FONA
-char smsBuffer[250];
+char fonaInBuffer[64];          //for notifications from the FONA
 
-void loop() {
+void loop() 
+{
   
-  char* bufPtr = fonaNotificationBuffer;    //handy buffer pointer
+  char* bufPtr = fonaInBuffer;    //handy buffer pointer
   
   if (fona.available())      //any data available from the FONA?
   {
     int slot = 0;            //this will be the slot number of the SMS
     int charCount = 0;
     //Read the notification into fonaInBuffer
-    do  {
+    do  
+    {
       *bufPtr = fona.read();
       Serial.write(*bufPtr);
       delay(1);
-    } while ((*bufPtr++ != '\n') && (fona.available()) && (++charCount < (sizeof(fonaNotificationBuffer)-1)));
+    } while ((*bufPtr++ != '\n') && (fona.available()) && (++charCount < (sizeof(fonaInBuffer)-1)));
     
     //Add a terminal NULL to the notification string
     *bufPtr = 0;
-
+    
     //Scan the notification string for an SMS received notification.
     //  If it's an SMS message, we'll get the slot number in 'slot'
-    if (1 == sscanf(fonaNotificationBuffer, "+CMTI: " FONA_PREF_SMS_STORAGE ",%d", &slot)) {
+    if (1 == sscanf(fonaInBuffer, "+CMTI: " FONA_PREF_SMS_STORAGE ",%d", &slot)) 
+    {
       Serial.print("slot: "); Serial.println(slot);
       
       char callerIDbuffer[32];  //we'll store the SMS sender number in here
       
       // Retrieve SMS sender address/phone number.
-      if (! fona.getSMSSender(slot, callerIDbuffer, 31)) {
+      if (! fona.getSMSSender(slot, callerIDbuffer, 31)) 
+      {
         Serial.println("Didn't find SMS message in slot!");
       }
       Serial.print(F("FROM: ")); Serial.println(callerIDbuffer);
-
-        // Retrieve SMS value.
-        uint16_t smslen;
-        if (fona.readSMS(slot, smsBuffer, 250, &smslen)) { // pass in buffer and max len!
-          Serial.println(smsBuffer);
-        }
-
+      
+      if(relay_state)
+      {
+        relay_state = 0;
+        digitalWrite(RELAY, LOW);
+      }
+      else
+      {
+        relay_state = 1;
+        digitalWrite(RELAY, HIGH);
+      }
+      
       //Send back an automatic response
       Serial.println("Sending reponse...");
-      if (!fona.sendSMS(callerIDbuffer, "Hey, I got your text!")) {
+      if (relay_state? !fona.sendSMS(callerIDbuffer, "Relay ON") : !fona.sendSMS(callerIDbuffer, "Relay OFF") ) 
+      {
         Serial.println(F("Failed"));
-      } else {
+      } 
+      else 
+      {
         Serial.println(F("Sent!"));
       }
       
       // delete the original msg after it is processed
       //   otherwise, we will fill up all the slots
       //   and then we won't be able to receive SMS anymore
-      if (fona.deleteSMS(slot)) {
+      if (fona.deleteSMS(slot)) 
+      {
         Serial.println(F("OK!"));
-      } else {
+      } 
+      else 
+      {
         Serial.print(F("Couldn't delete SMS in slot ")); Serial.println(slot);
         fona.print(F("AT+CMGD=?\r\n"));
       }
